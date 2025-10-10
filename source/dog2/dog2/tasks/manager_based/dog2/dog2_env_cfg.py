@@ -223,17 +223,17 @@ class RewardsCfg:
     # -- penalties
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-2.0)
     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
-    dof_torques_l2 = RewTerm(func=mdp.joint_torques_l2, weight=0.0002)
+    dof_torques_l2 = RewTerm(func=mdp.joint_torques_l2, weight=0.00002)
     dof_acc_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
     # Contact-based rewards commented out for now
     feet_air_time = RewTerm(
         func=mdp.feet_air_time,
-        weight=0.25, #0.125
+        weight=0.5, #0.125
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
             "command_name": "base_velocity",
-            "threshold": 0.5,
+            "threshold": 0.4, #0.5
         },
     )
     undesired_contacts = RewTerm(
