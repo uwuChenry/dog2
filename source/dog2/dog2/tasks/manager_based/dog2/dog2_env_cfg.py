@@ -5,6 +5,7 @@
 
 import math
 
+import torch
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
@@ -16,7 +17,7 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sensors import ContactSensorCfg
+from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, patterns
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
@@ -25,6 +26,40 @@ from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 import isaaclab_tasks.manager_based.locomotion.velocity.mdp as mdp
 
 from . import mdp as local_mdp
+
+##
+# Custom reward functions
+##
+
+def reward_height_scan_above_threshold(env, sensor_cfg: SceneEntityCfg, threshold: float = 0.25) -> torch.Tensor:
+    """Reward when mean height scan is above threshold.
+    
+    Args:
+        env: The environment instance.
+        sensor_cfg: The sensor configuration.
+        threshold: Height threshold in meters (default: 0.25m).
+        
+    Returns:
+        Reward tensor with values between 0.0 and 1.0.
+    """
+    # Get the sensor
+    sensor = env.scene.sensors[sensor_cfg.name]
+    
+    # Calculate height scan: sensor_height - hit_point_z
+    height_data = sensor.data.pos_w[:, 2].unsqueeze(1) - sensor.data.ray_hits_w[..., 2]
+    
+    # Calculate mean height for each environment
+    mean_height = height_data.mean(dim=1)  # Shape: [num_envs]
+    
+    # Reward when mean height is above threshold
+    # Use a smooth step function for gradual reward
+    reward = torch.where(
+        mean_height > threshold,
+        1.0,  # Full reward when above threshold
+        torch.clamp(mean_height / threshold, 0.0, 1.0)  # Scaled reward when below threshold
+    )
+    
+    return reward
 
 ##
 # Pre-defined configs
@@ -62,6 +97,16 @@ class Dog2SceneCfg(InteractiveSceneCfg):
     )
     # robot - using your custom dog1 configuration
     robot: ArticulationCfg = MY_DOG_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+
+    # Height scanner for terrain awareness
+    height_scanner = RayCasterCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/base",
+        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
+        ray_alignment="yaw",
+        pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.6, 1.0]),
+        debug_vis=True,  # Enable ray visualization
+        mesh_prim_paths=["/World/ground"],
+    )
 
     # Contact sensors - commented out for now
     contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True)
@@ -120,6 +165,12 @@ class ObservationsCfg:
         joint_pos = ObsTerm(func=mdp.joint_pos_rel, noise=Unoise(n_min=-0.01, n_max=0.01))
         joint_vel = ObsTerm(func=mdp.joint_vel_rel, noise=Unoise(n_min=-1.5, n_max=1.5))
         actions = ObsTerm(func=mdp.last_action)
+        # height_scan = ObsTerm(
+        #     func=mdp.height_scan,
+        #     params={"sensor_cfg": SceneEntityCfg("height_scanner")},
+        #     noise=Unoise(n_min=-0.1, n_max=0.1),
+        #     clip=(-1.0, 1.0),
+        # )
 
         def __post_init__(self):
             self.enable_corruption = True
@@ -248,6 +299,16 @@ class RewardsCfg:
 
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight= -2.5) #0
     dof_pos_limits = RewTerm(func=mdp.joint_pos_limits, weight=0.0)
+    
+    # Height-based reward - encourage staying in areas with mean height > 0.25m
+    height_scan_threshold = RewTerm(
+        func=reward_height_scan_above_threshold,
+        weight=0.3,  # Adjust this weight as needed
+        params={
+            "sensor_cfg": SceneEntityCfg("height_scanner"),
+            "threshold": 0.25  # 25cm threshold
+        },
+    )
 
 
 @configclass
@@ -313,6 +374,8 @@ class Dog2EnvCfg(ManagerBasedRLEnvCfg):
         # update sensor update periods
         if self.scene.contact_forces is not None:
             self.scene.contact_forces.update_period = self.sim.dt
+        if self.scene.height_scanner is not None:
+            self.scene.height_scanner.update_period = self.decimation * self.sim.dt
 
 
 @configclass
