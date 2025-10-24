@@ -31,13 +31,14 @@ from . import mdp as local_mdp
 # Custom reward functions
 ##
 
-def reward_height_scan_above_threshold(env, sensor_cfg: SceneEntityCfg, threshold: float = 0.25) -> torch.Tensor:
-    """Reward when mean height scan is above threshold.
+def reward_height_scan_above_threshold(env, sensor_cfg: SceneEntityCfg, min_height: float = 0.25, max_height: float = 0.34) -> torch.Tensor:
+    """Simple linear reward for height scan values.
     
     Args:
         env: The environment instance.
         sensor_cfg: The sensor configuration.
-        threshold: Height threshold in meters (default: 0.25m).
+        min_height: Minimum height for reward (default: 0.25m) -> reward = 0.0.
+        max_height: Maximum height for reward (default: 0.34m) -> reward = 1.0.
         
     Returns:
         Reward tensor with values between 0.0 and 1.0.
@@ -51,13 +52,8 @@ def reward_height_scan_above_threshold(env, sensor_cfg: SceneEntityCfg, threshol
     # Calculate mean height for each environment
     mean_height = height_data.mean(dim=1)  # Shape: [num_envs]
     
-    # Reward when mean height is above threshold
-    # Use a smooth step function for gradual reward
-    reward = torch.where(
-        mean_height > threshold,
-        1.0,  # Full reward when above threshold
-        torch.clamp(mean_height / threshold, 0.0, 1.0)  # Scaled reward when below threshold
-    )
+    # Simple linear reward: 0.0 at min_height, 1.0 at max_height
+    reward = torch.clamp((mean_height - min_height) / (max_height - min_height), 0.0, 1.0)
     
     return reward
 
@@ -300,13 +296,14 @@ class RewardsCfg:
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight= -2.5) #0
     dof_pos_limits = RewTerm(func=mdp.joint_pos_limits, weight=0.0)
     
-    # Height-based reward - encourage staying in areas with mean height > 0.25m
+    # Height-based reward - simple linear reward system
     height_scan_threshold = RewTerm(
         func=reward_height_scan_above_threshold,
-        weight=0.3,  # Adjust this weight as needed
+        weight=0.45,  # Adjust this weight as needed
         params={
             "sensor_cfg": SceneEntityCfg("height_scanner"),
-            "threshold": 0.25  # 25cm threshold
+            "min_height": 0.25,  # 0.0 reward at 25cm
+            "max_height": 0.30   # 1.0 reward at 30cm
         },
     )
 
