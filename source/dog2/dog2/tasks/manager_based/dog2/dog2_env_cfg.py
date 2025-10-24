@@ -57,6 +57,128 @@ def reward_height_scan_above_threshold(env, sensor_cfg: SceneEntityCfg, min_heig
     
     return reward
 
+
+def foot_clearance_reward(env, asset_cfg: SceneEntityCfg, target_height: float = 0.1, std: float = 0.25, tanh_mult: float = 1.0) -> torch.Tensor:
+    """Reward the swinging feet for clearing a specified height off the ground.
+    
+    Args:
+        env: The environment instance.
+        asset_cfg: The asset configuration for the robot.
+        target_height: Target height for foot clearance in meters (default: 0.1m).
+        std: Standard deviation for the exponential reward (default: 0.25).
+        tanh_mult: Multiplier for the tanh function to modulate velocity (default: 1.0).
+        
+    Returns:
+        Reward tensor encouraging foot clearance during swing phase.
+    """
+    # Get the robot asset
+    asset = env.scene[asset_cfg.name]
+    
+    # Calculate foot height error (difference from target height)
+    foot_z_target_error = torch.square(asset.data.body_pos_w[:, asset_cfg.body_ids, 2] - target_height)
+    
+    # Use foot velocity to determine swing phase (moving feet get more reward)
+    foot_velocity_tanh = torch.tanh(tanh_mult * torch.norm(asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :2], dim=2))
+    
+    # Combine height error with velocity (only reward moving feet)
+    reward = foot_z_target_error * foot_velocity_tanh
+    
+    # Return exponential reward (lower error = higher reward)
+    return torch.exp(-torch.sum(reward, dim=1) / std)
+
+
+def gait_reward(env, asset_cfg: SceneEntityCfg, sensor_cfg: SceneEntityCfg, std: float = 0.25, max_err: float = 0.1, 
+                velocity_threshold: float = 0.1, synced_feet_pair_names: list = None) -> torch.Tensor:
+    """Gait enforcing reward for quadrupeds (trotting gait).
+    
+    This reward enforces proper gait patterns by:
+    - Synchronizing diagonal pairs of feet (front-left with rear-right, front-right with rear-left)
+    - Anti-synchronizing between the two diagonal pairs
+    
+    Args:
+        env: The environment instance.
+        asset_cfg: The asset configuration for the robot.
+        sensor_cfg: The sensor configuration for contact detection.
+        std: Standard deviation for reward shaping (default: 0.25).
+        max_err: Maximum error clipping value (default: 0.1).
+        velocity_threshold: Minimum velocity to enforce gait (default: 0.1).
+        synced_feet_pair_names: Pairs of feet that should be synchronized.
+        
+    Returns:
+        Reward tensor encouraging proper trotting gait.
+    """
+    # Get sensors and assets
+    contact_sensor = env.scene.sensors[sensor_cfg.name]
+    asset = env.scene[asset_cfg.name]
+    
+    # Default diagonal pairs for trotting gait if not specified
+    if synced_feet_pair_names is None:
+        synced_feet_pair_names = [
+            [".*front_left.*foot", ".*rear_right.*foot"],  # Diagonal pair 1
+            [".*front_right.*foot", ".*rear_left.*foot"]   # Diagonal pair 2
+        ]
+    
+    # Find body IDs for each foot pair
+    try:
+        synced_feet_pair_0 = contact_sensor.find_bodies(synced_feet_pair_names[0])[0]
+        synced_feet_pair_1 = contact_sensor.find_bodies(synced_feet_pair_names[1])[0]
+    except:
+        # Fallback to simpler naming if the above doesn't work
+        try:
+            synced_feet_pair_0 = contact_sensor.find_bodies([".*FL.*foot", ".*RR.*foot"])[0]
+            synced_feet_pair_1 = contact_sensor.find_bodies([".*FR.*foot", ".*RL.*foot"])[0]
+        except:
+            # Final fallback - just use all feet with basic indices
+            all_feet = contact_sensor.find_bodies([".*foot"])[0]
+            if len(all_feet) >= 4:
+                synced_feet_pair_0 = [all_feet[0], all_feet[3]]  # Front-left, rear-right
+                synced_feet_pair_1 = [all_feet[1], all_feet[2]]  # Front-right, rear-left
+            else:
+                # Return zero reward if we can't find proper feet
+                return torch.zeros(env.num_envs, device=env.device)
+    
+    synced_feet_pairs = [synced_feet_pair_0, synced_feet_pair_1]
+    
+    def sync_reward_func(foot_0: int, foot_1: int) -> torch.Tensor:
+        """Reward synchronization of two feet."""
+        air_time = contact_sensor.data.current_air_time
+        contact_time = contact_sensor.data.current_contact_time
+        # Penalize difference between air and contact times of synced feet pairs
+        se_air = torch.clip(torch.square(air_time[:, foot_0] - air_time[:, foot_1]), max=max_err**2)
+        se_contact = torch.clip(torch.square(contact_time[:, foot_0] - contact_time[:, foot_1]), max=max_err**2)
+        return torch.exp(-(se_air + se_contact) / std)
+    
+    def async_reward_func(foot_0: int, foot_1: int) -> torch.Tensor:
+        """Reward anti-synchronization of two feet."""
+        air_time = contact_sensor.data.current_air_time
+        contact_time = contact_sensor.data.current_contact_time
+        # Penalize when opposing feet are in same phase (should be opposite)
+        se_act_0 = torch.clip(torch.square(air_time[:, foot_0] - contact_time[:, foot_1]), max=max_err**2)
+        se_act_1 = torch.clip(torch.square(contact_time[:, foot_0] - air_time[:, foot_1]), max=max_err**2)
+        return torch.exp(-(se_act_0 + se_act_1) / std)
+    
+    # Synchronous rewards (diagonal pairs should move together)
+    sync_reward_0 = sync_reward_func(synced_feet_pairs[0][0], synced_feet_pairs[0][1])
+    sync_reward_1 = sync_reward_func(synced_feet_pairs[1][0], synced_feet_pairs[1][1])
+    sync_reward = sync_reward_0 * sync_reward_1
+    
+    # Asynchronous rewards (diagonal pairs should be opposite to each other)
+    async_reward_0 = async_reward_func(synced_feet_pairs[0][0], synced_feet_pairs[1][0])
+    async_reward_1 = async_reward_func(synced_feet_pairs[0][1], synced_feet_pairs[1][1])
+    async_reward_2 = async_reward_func(synced_feet_pairs[0][0], synced_feet_pairs[1][1])
+    async_reward_3 = async_reward_func(synced_feet_pairs[1][0], synced_feet_pairs[0][1])
+    async_reward = async_reward_0 * async_reward_1 * async_reward_2 * async_reward_3
+    
+    # Only enforce gait when robot is moving
+    cmd = torch.norm(env.command_manager.get_command("base_velocity"), dim=1)
+    body_vel = torch.linalg.norm(asset.data.root_lin_vel_b[:, :2], dim=1)
+    
+    return torch.where(
+        torch.logical_or(cmd > 0.0, body_vel > velocity_threshold), 
+        sync_reward * async_reward, 
+        0.0
+    )
+
 ##
 # Pre-defined configs
 ##
@@ -265,7 +387,7 @@ class RewardsCfg:
         func=mdp.track_lin_vel_xy_exp, weight=1.5, params={"command_name": "base_velocity", "std": math.sqrt(0.25)}
     )
     track_ang_vel_z_exp = RewTerm(
-        func=mdp.track_ang_vel_z_exp, weight=0.75, params={"command_name": "base_velocity", "std": math.sqrt(0.25)}
+        func=mdp.track_ang_vel_z_exp, weight=1.0, params={"command_name": "base_velocity", "std": math.sqrt(0.25)}
     )
     # -- penalties
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-2.0)
@@ -274,15 +396,15 @@ class RewardsCfg:
     dof_acc_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
     # Contact-based rewards commented out for now
-    feet_air_time = RewTerm(
-        func=mdp.feet_air_time,
-        weight=0.5, #0.125
-        params={
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
-            "command_name": "base_velocity",
-            "threshold": 0.4, #0.5
-        },
-    )
+    # feet_air_time = RewTerm(
+    #     func=mdp.feet_air_time,
+    #     weight=0.125, #0.125
+    #     params={
+    #         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+    #         "command_name": "base_velocity",
+    #         "threshold": 0.5, #0.5
+    #     },
+    # )
     undesired_contacts = RewTerm(
         func=mdp.undesired_contacts, 
         weight=-0.1,
@@ -306,6 +428,35 @@ class RewardsCfg:
             "max_height": 0.30   # 1.0 reward at 30cm
         },
     )
+    
+    # Foot clearance reward - encourage lifting feet during swing phase
+    foot_clearance = RewTerm(
+        func=foot_clearance_reward,
+        weight=0.3,  # Adjust this weight as needed
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
+            "target_height": 0.06,  # Target 6cm foot clearance
+            "std": 0.05,             # Standard deviation for reward shaping
+            "tanh_mult": 2.0        # Velocity sensitivity multiplier
+        },
+    )
+    
+    # Gait reward - enforce proper trotting gait pattern
+    # gait_pattern = RewTerm(
+    #     func=gait_reward,
+    #     weight=1.0,  # Adjust this weight as needed
+    #     params={
+    #         "asset_cfg": SceneEntityCfg("robot"),
+    #         "sensor_cfg": SceneEntityCfg("contact_forces"),
+    #         "std": 0.1,             # Standard deviation for reward shaping (tighter control)
+    #         "max_err": 0.2,         # Maximum error clipping
+    #         "velocity_threshold": 0.5,  # Minimum velocity to enforce gait
+    #         "synced_feet_pair_names": [
+    #             ["FL_foot", "RR_foot"],  # Diagonal pair 1: Front-Left with Rear-Right
+    #             ["FR_foot", "RL_foot"]   # Diagonal pair 2: Front-Right with Rear-Left
+    #         ]
+    #     },
+    # )
 
 
 @configclass
