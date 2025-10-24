@@ -442,21 +442,21 @@ class RewardsCfg:
     )
     
     # Gait reward - enforce proper trotting gait pattern
-    # gait_pattern = RewTerm(
-    #     func=gait_reward,
-    #     weight=1.0,  # Adjust this weight as needed
-    #     params={
-    #         "asset_cfg": SceneEntityCfg("robot"),
-    #         "sensor_cfg": SceneEntityCfg("contact_forces"),
-    #         "std": 0.1,             # Standard deviation for reward shaping (tighter control)
-    #         "max_err": 0.2,         # Maximum error clipping
-    #         "velocity_threshold": 0.5,  # Minimum velocity to enforce gait
-    #         "synced_feet_pair_names": [
-    #             ["FL_foot", "RR_foot"],  # Diagonal pair 1: Front-Left with Rear-Right
-    #             ["FR_foot", "RL_foot"]   # Diagonal pair 2: Front-Right with Rear-Left
-    #         ]
-    #     },
-    # )
+    gait_pattern = RewTerm(
+        func=gait_reward,
+        weight=1.0,  # Adjust this weight as needed
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "sensor_cfg": SceneEntityCfg("contact_forces"),
+            "std": 0.1,             # Standard deviation for reward shaping (tighter control)
+            "max_err": 0.2,         # Maximum error clipping
+            "velocity_threshold": 0.5,  # Minimum velocity to enforce gait
+            "synced_feet_pair_names": [
+                ["FL_foot", "RR_foot"],  # Diagonal pair 1: Front-Left with Rear-Right
+                ["FR_foot", "RL_foot"]   # Diagonal pair 2: Front-Right with Rear-Left
+            ]
+        },
+    )
 
 
 @configclass
