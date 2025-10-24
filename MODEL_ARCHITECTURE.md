@@ -94,7 +94,7 @@ Value Network (Critic):
 
 The reward system implements a multi-component approach to encourage natural locomotion behaviors:
 
-### 1. Velocity Tracking Rewards (Weight: 1.5)
+### 1. Velocity Tracking Rewards
 ```python
 lin_vel_z_l2: -2.0      # Penalize vertical motion
 ang_vel_xy_l2: -0.05    # Penalize roll/pitch rotation  
@@ -110,7 +110,7 @@ dof_acc_l2: -2.5e-7        # Penalize rapid accelerations
 ```
 **Purpose**: Promote energy-efficient, smooth movements.
 
-### 3. Height-Aware Navigation (Weight: 0.45)
+### 3. Height-Aware Navigation
 ```python
 def reward_height_scan_above_threshold(min_height=0.25, max_height=0.30):
     """Linear reward for terrain height awareness"""
@@ -120,7 +120,7 @@ def reward_height_scan_above_threshold(min_height=0.25, max_height=0.30):
 ```
 **Purpose**: Encourage navigation over elevated terrain (25-30cm height range).
 
-### 4. Foot Clearance Reward (Weight: 0.3)
+### 4. Foot Clearance Reward
 ```python
 def foot_clearance_reward(target_height=0.06, std=0.05):
     """Reward proper foot lifting during swing phase"""
@@ -130,7 +130,7 @@ def foot_clearance_reward(target_height=0.06, std=0.05):
 ```
 **Purpose**: Encourage 6cm foot clearance during swing phase to prevent dragging.
 
-### 5. Gait Pattern Enforcement (Weight: 1.0)
+### 5. Gait Pattern Enforcement
 ```python
 def gait_reward(synced_pairs=[["FL_foot", "RR_foot"], ["FR_foot", "RL_foot"]]):
     """Enforce trotting gait with diagonal coordination"""
@@ -150,19 +150,10 @@ base_contact: TERMINATION     # End episode on base contact
 ```
 **Purpose**: Prevent unsafe configurations and maintain stability.
 
-### Reward Weight Distribution
-| Component | Weight | Purpose |
-|-----------|--------|---------|
-| Velocity Tracking | 1.5 | Primary task objective |
-| Gait Pattern | 1.0 | Natural locomotion |
-| Height Awareness | 0.45 | Terrain navigation |
-| Foot Clearance | 0.3 | Prevent dragging |
-| Energy Efficiency | 0.01-0.0002 | Smooth movement |
-| Safety | -0.1 to -2.5 | Stability constraints |
 
 ## Training Dynamics
 
-### Curriculum Learning
+### Randomization
 - **Mass Randomization**: Base mass ±1-3 kg
 - **Center of Mass**: ±5cm in X-Y, ±1cm in Z
 - **Surface Properties**: Static friction 0.8, dynamic 0.6
@@ -175,13 +166,10 @@ base_contact: TERMINATION     # End episode on base contact
   - Average episode reward
   - Velocity tracking error
   - Gait consistency
-  - Energy consumption
   - Foot clearance statistics
 
 ### Hardware Requirements
-- **GPU Memory**: 8GB+ recommended for 32K environments
-- **PhysX Configuration**: Optimized for large-scale parallel simulation
-- **Storage**: Episode logging and model checkpoints
+- **GPU Memory**: 20gb+ recommended for 32K environments 12gb+ for 4k
 
 ## Usage Examples
 
@@ -207,7 +195,3 @@ base_contact: TERMINATION     # End episode on base contact
 3. **Vision Integration**: Camera-based navigation and obstacle avoidance
 4. **Robustness Testing**: Disturbance rejection and recovery behaviors
 5. **Real Robot Transfer**: Sim-to-real domain adaptation techniques
-
----
-
-*This architecture enables robust quadruped locomotion with natural gaits, terrain awareness, and efficient energy usage through carefully designed reward shaping and observation spaces.*
