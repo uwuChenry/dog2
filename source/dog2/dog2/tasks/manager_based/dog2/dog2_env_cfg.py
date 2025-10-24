@@ -395,16 +395,16 @@ class RewardsCfg:
     dof_torques_l2 = RewTerm(func=mdp.joint_torques_l2, weight=0.00002)
     dof_acc_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
-    # Contact-based rewards commented out for now
-    # feet_air_time = RewTerm(
-    #     func=mdp.feet_air_time,
-    #     weight=0.125, #0.125
-    #     params={
-    #         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
-    #         "command_name": "base_velocity",
-    #         "threshold": 0.5, #0.5
-    #     },
-    # )
+
+    feet_air_time = RewTerm(
+        func=mdp.feet_air_time,
+        weight=0.2, #0.125
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+            "command_name": "base_velocity",
+            "threshold": 0.6, #0.5
+        },
+    )
     undesired_contacts = RewTerm(
         func=mdp.undesired_contacts, 
         weight=-0.1,
@@ -424,8 +424,8 @@ class RewardsCfg:
         weight=0.45,  # Adjust this weight as needed
         params={
             "sensor_cfg": SceneEntityCfg("height_scanner"),
-            "min_height": 0.25,  # 0.0 reward at 25cm
-            "max_height": 0.30   # 1.0 reward at 30cm
+            "min_height": 0.23,  # 0.0 reward at 23cm
+            "max_height": 0.26   # 1.0 reward at 26cm
         },
     )
     
@@ -435,9 +435,9 @@ class RewardsCfg:
         weight=0.3,  # Adjust this weight as needed
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
-            "target_height": 0.06,  # Target 6cm foot clearance
+            "target_height": 0.1,  # Target 10cm foot clearance
             "std": 0.05,             # Standard deviation for reward shaping
-            "tanh_mult": 2.0        # Velocity sensitivity multiplier
+            "tanh_mult": 1.0        # Velocity sensitivity multiplier
         },
     )
     
